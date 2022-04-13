@@ -1,0 +1,295 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class BoardController : MonoBehaviour
+{
+    public static BoardController instance;
+
+    private int xSize, ySize;
+    private List<Sprite> tileSprite = new List<Sprite>();
+    private Tile[,] tileArray;
+
+    private Vector2[] dirRay = new Vector2[] { Vector2.up, Vector2.right, Vector2.down, Vector2.left };
+    public Vector2 initialPos, targetPos;
+
+    //Проверка "падают" тайлы или нет
+    private bool isShift = false;
+    //Поиск пустых тайлов
+    private bool isSearchEmptyTile = false;
+
+    //Создание Диста для добавления тайлов Select
+    public List<Tile> TileSelectedL = new List<Tile>();
+
+
+    public void SetValue(Tile[,] tileArray, int xSize, int ySize, List<Sprite> tileSprite)
+    {
+        this.tileArray = tileArray;
+        this.xSize = xSize;
+        this.ySize = ySize;
+        this.tileSprite = tileSprite;
+    }
+
+    //отразить в быстром доступе информацию по рейкасту линии
+    public LineRenderer line;
+
+    //получить информациб по позиции курсора
+    private Vector3 GetWorldCoordinate(Vector3 mousePosition)
+    {
+        Vector3 mousePoint = new Vector3(mousePosition.x, mousePosition.y, 1);
+        return Camera.main.ScreenToWorldPoint(mousePoint);
+    }
+
+    private void Awake()
+    {
+        instance = this;
+    }
+
+    // Команда перед первым обновлением экрана
+    // Start is called before the first frame update
+    void Start()
+    {
+        //установка характеристик линии рейкаста
+        line.startWidth = 0.1f;
+        line.endWidth = 0.1f;
+        line.positionCount = 0;
+    }
+
+    // Обновляемые каждый кадр действия
+    // Update is called once per frame
+    void Update()
+    {
+        if (isSearchEmptyTile)
+        {
+            SearchEmptyTile();
+        }
+
+
+        targetPos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+
+        // действие с тайлом если нажата мышь
+        if (Input.GetMouseButton(0))
+        {
+            RaycastHit2D ray = Physics2D.GetRayIntersection(Camera.main.ScreenPointToRay(Input.mousePosition));
+            if (ray != false)
+            {
+                CheckSelectTile(ray.collider.gameObject.GetComponent<Tile>());
+            }
+        }
+
+        // Если отпустили мышку
+        // Если выбрано больше 2 тайлов
+        if (Input.GetMouseButtonUp(0) && TileSelectedL.Count > 2)
+        {
+
+            for (int i = 0; i < TileSelectedL.Count; i++)
+            {
+                TileSelectedL[i].spriteRenderer.sprite = null;
+            }
+
+            for (int n = 0; n < TileSelectedL.Count; n++)
+            {
+                DeselectTile(TileSelectedL[n]);
+            }
+            if (Input.GetMouseButtonUp(0) && TileSelectedL.Count == 2)
+            {
+                DeselectTile(TileSelectedL[1]);
+                DeselectTile(TileSelectedL[0]);
+                if (Input.GetMouseButtonUp(0) && TileSelectedL.Count == 1)
+                {
+                    DeselectTile(TileSelectedL[0]);
+
+                }
+            }
+
+            TileSelectedL.Clear(); //Очистить лист
+            line.positionCount = 0; //Отключить линию
+        }
+
+        // Если выбрано 2 тайла
+        if (Input.GetMouseButtonUp(0) && TileSelectedL.Count == 2)
+        {
+            DeselectTile(TileSelectedL[1]);
+            DeselectTile(TileSelectedL[0]);
+
+            TileSelectedL.Clear(); //Очистить лист
+            line.positionCount = 0; //Отключить линию
+        }
+
+        // Если выбран только 1 Тайл
+        if (Input.GetMouseButtonUp(0) && TileSelectedL.Count == 1)
+        {
+            DeselectTile(TileSelectedL[0]);
+            TileSelectedL.Clear(); //Очистить лист
+            line.positionCount = 0; //Отключить линию
+        }
+
+
+        //Поиск пустых тайлов
+        isSearchEmptyTile = true;
+
+
+    }
+
+
+    //"Выбор" тайла
+    private void SelectTile(Tile tile)
+    {
+        //Добавить объекты в List
+        TileSelectedL.Add(tile);
+
+        //отобразить селект тайла
+        TileSelectedL[TileSelectedL.Count - 1].isSelected = true;
+        TileSelectedL[TileSelectedL.Count - 1].spriteRenderer.color = new Color(0.5f, 0.5f, 0.5f);
+
+        //отобразить рейкаст (линия выбора)
+        Vector2 currentPoint = TileSelectedL[0].transform.position;
+        line.positionCount++;
+        line.SetPosition(line.positionCount - 1, TileSelectedL[TileSelectedL.Count - 1].transform.position);
+    }
+
+
+    //Отмена "Выбора" тайла
+    private void DeselectTile(Tile tile)
+    {
+        //укоротить рейкаст (линия выбора)
+        line.positionCount--;
+
+        //Убрать объект из List
+        if (TileSelectedL.Count > 0)
+        {
+            TileSelectedL[TileSelectedL.Count - 1].isSelected = false;
+            TileSelectedL[TileSelectedL.Count - 1].spriteRenderer.color = new Color(1f, 1f, 1f);
+            TileSelectedL.RemoveAt(TileSelectedL.Count - 1);
+        }
+    }
+
+
+    //Проверка что делать с тайлом "Выбор" или отмена "Выбора"
+    private void CheckSelectTile(Tile tile)
+    {
+        //если тайл пустой то ничего
+        if (tile.isEmpty || isShift)
+        {
+            return;
+        }
+        //первый и при условии совпадении спрайтов селект
+        if (!tile.isSelected && TileSelectedL.Count == 0 || !tile.isSelected && TileSelectedL[TileSelectedL.Count - 1].spriteRenderer.sprite == tile.spriteRenderer.sprite && AdjacentTiles().Contains(tile))
+        {
+            SelectTile(tile);
+        }
+        //если движение назад
+        if (TileSelectedL.Count > 1 && TileSelectedL[TileSelectedL.Count - 2].transform.position == tile.transform.position)
+        {
+            DeselectTile(TileSelectedL[TileSelectedL.Count - 1]);
+        }
+
+    }
+
+    //Проверка соседних тайлов
+    private List<Tile> AdjacentTiles()
+    {
+        List<Tile> cashTiles = new List<Tile>();
+        for (int i = 0; i < dirRay.Length; i++)
+        {
+            if (TileSelectedL.Count > 0)
+            {
+                RaycastHit2D hit = Physics2D.Raycast(TileSelectedL[TileSelectedL.Count - 1].transform.position, dirRay[i]);
+                if (hit.collider != null)
+                {
+                    cashTiles.Add(hit.collider.gameObject.GetComponent<Tile>());
+                }
+            }
+
+        }
+        return cashTiles;
+    }
+
+    //Поиск пустых тайлов
+    private void SearchEmptyTile()
+    {
+        for (int x = 0; x < xSize; x++)
+        {
+            for (int y = 0; y < ySize; y++)
+            {
+                if (tileArray[x, y].isEmpty)
+                {
+                    ShiftTileDown(x, y);
+                    break;
+                }
+
+
+                if (x == xSize && y == ySize)
+                {
+                    isSearchEmptyTile = false;
+                }
+
+            }
+        }
+    }
+
+    //Опустить тайлы сверху вниз
+    private void ShiftTileDown(int xPos, int yPos)
+    {
+        isShift = true; //включено "падение тайлов"
+        List<SpriteRenderer> cashRenderer = new List<SpriteRenderer>();     //Создан новый массив типа Лист
+        for (int x = xPos; x <= xSize; x++)     //Для всех переменных х, от xPos до размера поля по оси x
+        {
+            for (int y = yPos; y < ySize; y++)  //Для всех переменных y, от yPos до размера поля по оси y
+            {   //Что выполняется
+                Tile tile = tileArray[xPos, y]; //тайл это один из тайлов с позицией в массиве xPos, y 
+                if (tile.isEmpty) // если Тайл пустой
+                {
+                    cashRenderer.Add(tile.spriteRenderer); //ДОбавить в Лист спрайт тайла
+                }
+            }
+            SetNewSprite(xPos, cashRenderer); //Применить к тайлам позиции xPos, cashrenderer
+            isShift = false; //отключить "падение тайлов"
+        }
+    }
+
+    //Присвоить тайлу новый спрайт
+    private void SetNewSprite(int xPos, List<SpriteRenderer> renderer)
+    {
+        for (int y = 0; y < renderer.Count - 1; y++) //Для всех переменных y от 0 до количества в листе renderer
+        {
+            renderer[y].sprite = renderer[y + 1].sprite; //порядковый номер y (его спрайт) = порядковому номеру y+1 (его спрайт)
+            renderer[y + 1].sprite = GetNewSprite(xPos, ySize - 1); //порядковый номер y+1 (его спрайт) = результат GetNewSprite для xPos, размер поля по оси y-1
+
+        }
+
+
+        Debug.Log(renderer.Count); //Проверка что получается
+    }
+
+    //Не понятно
+    private Sprite GetNewSprite(int xPos, int yPos)
+    {
+        List<Sprite> cashSprite = new List<Sprite>(); //Создание нового листа cashSprite
+        cashSprite.AddRange(tileSprite); //Добавить в Лист Диапазон tileSprite
+
+        if (xPos > 0) //Если xPos больше 0
+        {
+            cashSprite.Remove(tileArray[xPos - 1, yPos].spriteRenderer.sprite); //
+        }
+
+        if (xPos < xSize - 1)
+        {
+            cashSprite.Remove(tileArray[xPos + 1, yPos].spriteRenderer.sprite);
+        }
+
+        if (yPos > 0)
+        {
+            cashSprite.Remove(tileArray[xPos, yPos - 1].spriteRenderer.sprite);
+        }
+
+
+        return cashSprite[Random.Range(0, cashSprite.Count)];
+
+
+
+    }
+
+
+}
+
